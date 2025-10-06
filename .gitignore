@@ -1,0 +1,20 @@
+# Python Virtual Environment
+# This is the most important one to ignore!
+venv/
+.venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Editor & IDE specific files
+.vscode/
+.idea/
+
+# Environment variables
+# Never commit secrets!
+.env
+
+# OS-generated files
+.DS_Store
+Thumbs.db
