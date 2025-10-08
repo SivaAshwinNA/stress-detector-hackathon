@@ -305,7 +305,7 @@ function stopFrameLoop(){
 }
 
 // --- Analysis fetch and Chart.js rendering ---
-let chatChart=null, videoChart=null, combinedChart=null;
+let chatChart=null;
 let lastAnalysisPayload=null;
 let analysisAbortController=null;
 let analysisProgressTimer=null;
@@ -387,43 +387,45 @@ function renderCharts(payload){
 
     // Destroy existing charts
     if (chatChart) chatChart.destroy();
-    if (videoChart) videoChart.destroy();
-    if (combinedChart) combinedChart.destroy();
+    // Only chat chart is used now
 
     // Check if canvas elements exist
     const chatCanvas = document.getElementById('chatChart');
-    const videoCanvas = document.getElementById('videoChart');
-    const combinedCanvas = document.getElementById('combinedChart');
+    const videoCanvas = null;
+    const combinedCanvas = null;
     
-    if (!chatCanvas || !videoCanvas || !combinedCanvas) {
+    if (!chatCanvas) {
         console.error('Chart canvas elements not found!');
         return;
     }
 
     // Prepare data for charts - use proper format for Chart.js
+    // For chat chart, use labels + numeric data for maximum compatibility
+    const chatLabels = chatSeries.map(p => new Date(p.t));
+    const chatValues = chatSeries.map(p => p.score);
+    // For other charts, keep x/y pairs
     const chatData = chatSeries.map(p => ({ x: new Date(p.t), y: p.score }));
-    const videoData = videoSeries.map(p => ({ x: new Date(p.t), y: p.score }));
-    const combinedData = combinedSeries.map(p => ({ x: new Date(p.t), y: p.score }));
+    // Pruned
     
     console.log('Chat data sample:', chatData.slice(0, 3)); // Debug logging
-    console.log('Video data sample:', videoData.slice(0, 3)); // Debug logging
+    // Pruned
     
     // Validate data before creating charts
     if (chatData.some(d => isNaN(d.x) || isNaN(d.y))) {
         console.error('Invalid chat data detected');
     }
-    if (videoData.some(d => isNaN(d.x) || isNaN(d.y))) {
-        console.error('Invalid video data detected');
-    }
+    // Pruned
 
     // Chat Chart - Line graph
     try {
-        chatChart = new Chart(chatCanvas.getContext('2d'), {
+        const chatCtx = chatCanvas.getContext('2d');
+        chatChart = new Chart(chatCtx, {
             type: 'line',
             data: { 
+                labels: chatLabels,
                 datasets: [{ 
                     label: 'Chat Stress Level', 
-                    data: chatData, 
+                    data: chatValues, 
                     borderColor: '#10b981',
                     backgroundColor: 'rgba(16, 185, 129, 0.1)',
                     tension: 0.4, 
@@ -439,6 +441,11 @@ function renderCharts(payload){
                 scales: {
                     x: { 
                         type: 'time',
+                        min: payload.chat_time?.start ? new Date(payload.chat_time.start) : undefined,
+                        max: payload.chat_time?.end ? new Date(payload.chat_time.end) : undefined,
+                        time: {
+                            displayFormats: { minute: 'HH:mm', hour: 'HH:mm' }
+                        },
                         title: {
                             display: true,
                             text: 'Time'
@@ -470,130 +477,7 @@ function renderCharts(payload){
         console.error('Error creating chat chart:', error);
     }
 
-    // Video Chart - Line graph for consistency
-    try {
-        videoChart = new Chart(videoCanvas.getContext('2d'), {
-            type: 'line',
-            data: { 
-                datasets: [{ 
-                    label: 'Video Stress Level', 
-                    data: videoData, 
-                    borderColor: '#3b82f6',
-                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                    tension: 0.4, 
-                    pointRadius: 3,
-                    pointHoverRadius: 5,
-                    fill: true
-                }]
-            },
-            options: { 
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: false,
-                scales: {
-                    x: { 
-                        type: 'time',
-                        title: {
-                            display: true,
-                            text: 'Time'
-                        }
-                    },
-                    y: { 
-                        min: 0, 
-                        max: 100,
-                        title: {
-                            display: true,
-                            text: 'Stress Level (%)'
-                        }
-                    }
-                },
-                plugins: { 
-                    legend: { display: true },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                return `Stress: ${context.parsed.y}%`;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-        console.log('Video chart created successfully');
-    } catch (error) {
-        console.error('Error creating video chart:', error);
-    }
-
-    // Combined Chart - Line graph showing both series
-    try {
-        combinedChart = new Chart(combinedCanvas.getContext('2d'), {
-            type: 'line',
-            data: {
-                datasets: [
-                    {
-                        label: 'Chat Stress',
-                        data: chatData,
-                        borderColor: '#10b981',
-                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                        tension: 0.4,
-                        pointRadius: 2
-                    },
-                    {
-                        label: 'Video Stress',
-                        data: videoData,
-                        borderColor: '#3b82f6',
-                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                        tension: 0.4,
-                        pointRadius: 2
-                    },
-                    {
-                        label: 'Combined Average',
-                        data: combinedData,
-                        borderColor: '#ef4444',
-                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                        tension: 0.4,
-                        pointRadius: 3,
-                        borderWidth: 3
-                    }
-                ]
-            },
-            options: { 
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: false,
-                scales: {
-                    x: { 
-                        type: 'time',
-                        title: {
-                            display: true,
-                            text: 'Time'
-                        }
-                    },
-                    y: { 
-                        min: 0, 
-                        max: 100,
-                        title: {
-                            display: true,
-                            text: 'Stress Level (%)'
-                        }
-                    }
-                },
-                plugins: { 
-                    legend: { display: true },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                return `${context.dataset.label}: ${context.parsed.y}%`;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-        console.log('Combined chart created successfully');
-    } catch (error) {
-        console.error('Error creating combined chart:', error);
-    }
+    // Pruned video and combined charts
 
     renderCards(payload);
 }
@@ -629,14 +513,7 @@ function renderCards(payload){
     } else {
         console.error('chat-cards element not found!');
     }
-    // Video cards
-    const vwrap = document.getElementById('video-cards');
-    if (vwrap){
-        const avgV = (payload.video_metrics?.avg ?? 0).toFixed(0);
-        const spikes = payload.video_metrics?.spikes ?? 0;
-        const dom = payload.video_metrics?.dominant_emotion || '-';
-        vwrap.innerHTML = card('Avg Facial Stress', avgV+'%') + card('Stress Spikes', spikes) + card('Dominant Emotion', dom);
-    }
+    // Pruned video cards
     // Combined card to include categorical stress level
     const combinedWrap = document.getElementById('combined-card'); // Assuming an element with this ID exists or will be created in chat.html
     if (combinedWrap && payload.combined_level_text){
@@ -655,12 +532,47 @@ function avg(arr){ if (!arr || !arr.length) return 0; return Math.round(arr.redu
 
 function downloadAnalysis(){
     if (!lastAnalysisPayload) return;
-    const blob = new Blob([JSON.stringify(lastAnalysisPayload, null, 2)], {type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `analysis_${Date.now()}.json`;
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
+    const { jsPDF } = window.jspdf || {};
+    if (!jsPDF){
+        alert('PDF generator not available');
+        return;
+    }
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    const margin = 40;
+    let y = margin;
+    const line = (text, size=12, bold=false)=>{
+        doc.setFont('helvetica', bold ? 'bold' : 'normal');
+        doc.setFontSize(size);
+        doc.text(String(text), margin, y);
+        y += size + 8;
+    };
+    // Title
+    line('Chat Stress Analysis', 18, true);
+    // Time range
+    if (lastAnalysisPayload.chat_time){
+        line(`Period: ${lastAnalysisPayload.chat_time.start || '-'} to ${lastAnalysisPayload.chat_time.end || '-'}`, 10);
+    }
+    // Cards
+    const cm = lastAnalysisPayload.chat_metrics || {};
+    line(`Avg Stress: ${cm.avg != null ? Math.round(cm.avg) + '%' : '-'}`, 12);
+    line(`Messages: ${cm.count_messages ?? 0}`, 12);
+    line(`Peak Stress: ${cm.peak?.score ?? '-'}`, 12);
+    // Overall level
+    if (lastAnalysisPayload.combined_level_text){
+        line(`Overall Stress Level: ${lastAnalysisPayload.combined_level_text}`, 12, true);
+    }
+    // Recommendations
+    const recs = lastAnalysisPayload.recommendations || [];
+    if (recs.length){
+        line('Recommendations:', 14, true);
+        recs.forEach((r, idx)=>{
+            const title = r.title || 'Recommendation';
+            const link = r.link || '';
+            line(`${idx+1}. ${title}`, 11);
+            if (link){ line(link, 10); }
+        });
+    }
+    doc.save(`analysis_${Date.now()}.pdf`);
 }
 
 async function endSession(){
@@ -672,7 +584,17 @@ async function endSession(){
 
 function openAnalysisOverlay(){
     const overlay = document.getElementById('analysis-overlay');
-    if (overlay) overlay.style.display = 'block';
+    if (overlay) {
+        overlay.style.display = 'block';
+        // Give the overlay a tick to layout, then resize charts
+        setTimeout(()=>{
+            try {
+                if (chatChart) { chatChart.resize(); chatChart.update('none'); }
+                if (videoChart) { videoChart.resize(); videoChart.update('none'); }
+                if (combinedChart) { combinedChart.resize(); combinedChart.update('none'); }
+            } catch(e) { console.warn('Chart resize error', e); }
+        }, 50);
+    }
 }
 
 function closeAnalysisOverlay(){

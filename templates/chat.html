@@ -225,23 +225,7 @@
               padding: 12px;
             "
           >
-            <h4 style="margin: 0 0 8px 0">Video Analysis</h4>
-            <canvas id="videoChart" height="140"></canvas>
-            <div
-              id="video-cards"
-              style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px"
-            ></div>
-          </div>
-          <div
-            style="
-              background: #f9fafb;
-              border: 1px solid #eef2f7;
-              border-radius: 10px;
-              padding: 12px;
-            "
-          >
             <h4 style="margin: 0 0 8px 0">Combined Analysis</h4>
-            <canvas id="combinedChart" height="140"></canvas>
             <div
               id="combined-card"
               style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px"
@@ -267,7 +251,7 @@
             onclick="downloadAnalysis()"
             style="display: none"
           >
-            Download Analysis (JSON)
+            Download Analysis (PDF)
           </button>
           <button onclick="closeAnalysisOverlay()">Close</button>
         </div>
@@ -279,6 +263,7 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script src="{{ url_for('static', filename='chat.js') }}"></script>
   </body>
 </html>

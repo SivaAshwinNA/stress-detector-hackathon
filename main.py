@@ -527,6 +527,10 @@ def run_analysis():
             'combined': None if combined is None else max(0, min(100, combined)),
             'combined_level': combined_level,
             'combined_level_text': combined_level_text, # Add categorical text
+            'chat_time': {
+                'start': (chat_start_time.isoformat() if chat_start_time else None),
+                'end': (chat_end_time.isoformat() if chat_end_time else None)
+            },
             'chat_metrics': {
                 'avg': None if chat_avg is None else max(0, min(100, chat_avg)),
                 'count_messages': len(chat_series),  # Use filtered, analyzed series count
