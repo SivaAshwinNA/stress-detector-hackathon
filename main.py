@@ -3,7 +3,7 @@
 import os
 import random
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
 import json
 import uuid
@@ -335,11 +335,12 @@ def run_analysis():
                 neu_score = sentiment_scores['neu']
                 
                 # More nuanced stress calculation
-                if compound_score >= 0.05: # Positive sentiment
-                    # Scale positive sentiment (0.05 to 1) to low stress (50 to 0)
-                    base_score = 50 - (compound_score - 0.05) / 0.95 * 50
-                    # Adjust based on confidence in positive sentiment
-                    confidence_factor = pos_score * 0.3
+                # Refined thresholds: clearly positive -> 0% stress
+                if compound_score >= 0.20:  # confidently positive
+                    score = 0
+                elif compound_score >= 0.05: # mildly positive
+                    base_score = 25 - (compound_score - 0.05) / 0.15 * 25  # map 0.05..0.20 -> 25..0
+                    confidence_factor = pos_score * 0.2
                     score = int(max(0, base_score - confidence_factor * 10))
                 elif compound_score <= -0.05: # Negative sentiment
                     # Scale negative sentiment (-1 to -0.05) to high stress (100 to 50)
@@ -353,7 +354,7 @@ def run_analysis():
                     score = int(50 + uncertainty_factor * 10)
 
                 chat_series.append({
-                    't': c.timestamp.isoformat() if c.timestamp else datetime.utcnow().isoformat(),
+                    't': (c.timestamp.replace(tzinfo=timezone.utc).isoformat() if c.timestamp else datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()),
                     'score': score,
                     'text': c.message[:200]
                 })
@@ -417,7 +418,7 @@ def run_analysis():
                     score=_map_emotion_to_stress(emotion, confidence)
 
                 # Use actual frame timestamp, already filtered to be within chat session
-                frame_time = f.captured_at.isoformat()
+                frame_time = (f.captured_at.replace(tzinfo=timezone.utc).isoformat() if f.captured_at else datetime.utcnow().replace(tzinfo=timezone.utc).isoformat())
 
                 video_series.append({
                     't': frame_time,
@@ -528,8 +529,8 @@ def run_analysis():
             'combined_level': combined_level,
             'combined_level_text': combined_level_text, # Add categorical text
             'chat_time': {
-                'start': (chat_start_time.isoformat() if chat_start_time else None),
-                'end': (chat_end_time.isoformat() if chat_end_time else None)
+                'start': (chat_start_time.replace(tzinfo=timezone.utc).isoformat() if chat_start_time else None),
+                'end': (chat_end_time.replace(tzinfo=timezone.utc).isoformat() if chat_end_time else None)
             },
             'chat_metrics': {
                 'avg': None if chat_avg is None else max(0, min(100, chat_avg)),

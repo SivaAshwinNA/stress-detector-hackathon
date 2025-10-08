@@ -35,9 +35,6 @@
         </h2>
       </div>
       <div style="display: flex; gap: 8px; align-items: center">
-        <button id="camera-toggle" onclick="toggleCamera()">
-          Start Camera (consent)
-        </button>
         <button id="end-session" onclick="endSession()">End Session</button>
       </div>
     </div>
@@ -211,7 +208,7 @@
             "
           >
             <h4 style="margin: 0 0 8px 0">Chat Analysis</h4>
-            <canvas id="chatChart" height="140"></canvas>
+            <canvas id="chatChart" style="height:260px; max-height:260px; width:100%"></canvas>
             <div
               id="chat-cards"
               style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px"

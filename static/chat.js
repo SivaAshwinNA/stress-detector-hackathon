@@ -401,7 +401,8 @@ function renderCharts(payload){
 
     // Prepare data for charts - use proper format for Chart.js
     // For chat chart, use labels + numeric data for maximum compatibility
-    const chatLabels = chatSeries.map(p => new Date(p.t));
+    const chatLabelDates = chatSeries.map(p => new Date(p.t));
+    const chatLabels = chatLabelDates.map(d=> d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
     const chatValues = chatSeries.map(p => p.score);
     // For other charts, keep x/y pairs
     const chatData = chatSeries.map(p => ({ x: new Date(p.t), y: p.score }));
@@ -418,6 +419,8 @@ function renderCharts(payload){
 
     // Chat Chart - Line graph
     try {
+        // Ensure canvas has a compact, fixed visible height
+        chatCanvas.style.height = '260px';
         const chatCtx = chatCanvas.getContext('2d');
         chatChart = new Chart(chatCtx, {
             type: 'line',
@@ -439,18 +442,7 @@ function renderCharts(payload){
                 maintainAspectRatio: false,
                 animation: false,
                 scales: {
-                    x: { 
-                        type: 'time',
-                        min: payload.chat_time?.start ? new Date(payload.chat_time.start) : undefined,
-                        max: payload.chat_time?.end ? new Date(payload.chat_time.end) : undefined,
-                        time: {
-                            displayFormats: { minute: 'HH:mm', hour: 'HH:mm' }
-                        },
-                        title: {
-                            display: true,
-                            text: 'Time'
-                        }
-                    },
+                    x: { type: 'category', title: { display: true, text: 'Time (HH:mm)' } },
                     y: { 
                         min: 0, 
                         max: 100,
@@ -474,7 +466,39 @@ function renderCharts(payload){
         });
         console.log('Chat chart created successfully');
     } catch (error) {
-        console.error('Error creating chat chart:', error);
+        console.error('Error creating chat chart (time scale). Falling back to category scale:', error);
+        try {
+            if (chatChart) chatChart.destroy();
+            const chatCtx = chatCanvas.getContext('2d');
+            const fallbackLabels = chatLabels.map(d=> new Date(d).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+            chatChart = new Chart(chatCtx, {
+                type: 'line',
+                data: {
+                    labels: fallbackLabels,
+                    datasets: [{
+                        label: 'Chat Stress Level',
+                        data: chatValues,
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        tension: 0.4,
+                        pointRadius: 3,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    scales: {
+                        x: { type: 'category', title:{ display:true, text:'Time' } },
+                        y: { min:0, max:100, title:{ display:true, text:'Stress Level (%)' } }
+                    }
+                }
+            });
+            console.log('Chat chart created with category scale fallback');
+        } catch(innerErr){
+            console.error('Fallback chart creation failed:', innerErr);
+        }
     }
 
     // Pruned video and combined charts
