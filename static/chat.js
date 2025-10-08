@@ -1,0 +1,586 @@
+let socket=null;
+let currentRoom = null;
+let username = ''; // Will be initialized in DOMContentLoaded
+let roomMessages = {};
+let firebaseUser = null;
+let mediaStream = null;
+let frameTimer = null;
+
+function initSocket(){
+    console.log('initSocket called.'); // Debugging line
+    if (socket) return;
+    socket = io();
+    socket.on('connect', () => {
+        console.log('Socket connected!'); // Debugging line
+        const defaultRoom = getFirstRoomName() || '🧠 StressScope';
+        joinRoom(defaultRoom);
+        highlightActiveRoom(defaultRoom);
+    });
+    socket.on('message', (data) => {
+        addMessage(
+            data.username,
+            data.msg,
+            data.username === username ? 'own' : 'other'
+        );
+    });
+    socket.on('private_message', (data) => {
+        addMessage(data.from, `[Private] ${data.msg}`, 'private');
+    });
+    socket.on('status', (data) => {
+        addMessage('System', data.msg, 'system');
+    });
+    socket.on('active_users', (data) => {
+        const userList = document.getElementById('active-users');
+        userList.innerHTML = data.users
+            .map(
+                (user) => `
+            <div class="user-item" onclick="insertPrivateMessage('${user}')">
+                ${user} ${user === username ? '(you)' : ''}
+            </div>
+        `
+            )
+            .join('');
+    });
+}
+
+// Message Handling
+function addMessage(sender, message, type){
+    if(!roomMessages[currentRoom]){
+        roomMessages[currentRoom] = [];
+    }
+    roomMessages[currentRoom].push({ sender, message, type });
+
+    const chat = document.getElementById('chat');
+    const messageDiv = document.createElement('div');
+
+    messageDiv.className = `message ${type}`;
+    messageDiv.textContent = `${sender}: ${message}`;
+
+    chat.appendChild(messageDiv);
+    chat.scrollTop = chat.scrollHeight;
+}
+
+function sendMessage(){
+    const input = document.getElementById('message');
+    const message = input.value.trim();
+
+    if(!message) return;
+
+    // Require login before sending
+    if (!username || username.startsWith('Guest')){
+        alert('Please log in to start chatting.');
+        openLoginOverlay();
+        return;
+    }
+
+    if(message.startsWith('@')) {
+        const [target, ...msgParts]=message.substring(1).split(' ');
+        const privateMsg = msgParts.join(' ');
+
+        if(privateMsg){
+            socket.emit('message',{
+                msg:privateMsg,
+                type:'private',
+                target:target,
+            });
+        }
+    }else{
+        socket.emit('message',{
+            msg: message,
+            room: currentRoom,
+        });
+    }
+
+    input.value='';
+    input.focus();
+}
+
+// Join the room
+function joinRoom(room){
+    console.log(`Attempting to join room: ${room}`); // Debugging line
+    if (currentRoom && currentRoom !== room) {
+        socket.emit('leave', { room: currentRoom });
+    }
+    currentRoom = room;
+    socket.emit('join', { room });
+    // update active room highlight whenever we switch rooms
+    highlightActiveRoom(currentRoom);
+
+    const chat = document.getElementById('chat');
+    chat.innerHTML = '';
+
+    if (roomMessages[room]){
+        roomMessages[room].forEach((msg) => {
+            addMessage(msg.sender, msg.message, msg.type);
+        });
+    }
+}
+
+// Insert Private Message
+function insertPrivateMessage(user) {
+	document.getElementById('message').value = `@${user} `;
+	document.getElementById('message').focus();
+}
+
+function handleKeyPress(event) {
+	if (event.key === 'Enter' && !event.shiftKey) {
+		event.preventDefault();
+		sendMessage();
+	}
+}
+
+// Initialize when page loads
+document.addEventListener('DOMContentLoaded', () => {
+    // Initialize username from DOM element
+    const usernameElement = document.getElementById('username');
+    if (usernameElement) {
+        username = usernameElement.textContent.trim();
+    }
+    console.log('Initial username:', username); // Debugging line
+    
+    if ('Notification' in window) {
+        Notification.requestPermission();
+    }
+    
+    // Add click event listener to the join chat button
+    const joinBtn = document.getElementById('join-chat-btn');
+    if (joinBtn) {
+        joinBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            console.log('Join Chat button clicked'); // Debugging line
+            submitLogin();
+        });
+    }
+    
+    // Force login overlay if username is not valid (empty or still Jinja placeholder)
+    if (!username || username === '' || username === '{{ username }}'){
+        console.log('Username is empty or invalid, showing login overlay'); // Debugging line
+        openLoginOverlay();
+        setTimeout(()=>{
+            const inp = document.getElementById('login-username');
+            if (inp) inp.focus();
+        }, 50);
+    } else {
+        console.log('Username is valid, initializing socket'); // Debugging line
+        initSocket();
+    }
+});
+
+// Add this new function to handle room highlighting
+function highlightActiveRoom(room) {
+	document.querySelectorAll('.room-item').forEach((item) => {
+		item.classList.remove('active-room');
+		if (item.textContent.trim() === room) {
+			item.classList.add('active-room');
+		}
+	});
+}
+
+function getFirstRoomName() {
+	const first = document.querySelector('.room-item');
+	return first ? first.textContent.trim() : null;
+}
+
+// --- Simple name overlay functions ---
+function openLoginOverlay(){
+    console.log('openLoginOverlay called'); // Debugging line
+    const o = document.getElementById('login-overlay');
+    if (o) {
+        o.style.display = 'block';
+        console.log('Login overlay should now be visible'); // Debugging line
+    } else {
+        console.error('Login overlay element not found!'); // Debugging line
+    }
+}
+
+function closeLoginOverlay(){
+    const o = document.getElementById('login-overlay');
+    if (o) o.style.display = 'none';
+}
+
+async function submitLogin(){
+    console.log('submitLogin called'); // Debugging line
+    const input = document.getElementById('login-username');
+    const val = (input && input.value ? input.value : '').trim();
+    console.log('Username input value:', val); // Debugging line
+    if (!val){ alert('Please enter a username'); return; }
+    try{
+        console.log('Sending login request...'); // Debugging line
+        const resp = await fetch('/login',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ username: val })
+        });
+        const data = await resp.json();
+        console.log('Login response:', data); // Debugging line
+        if (data && data.ok){
+            username = data.username;
+            const u = document.getElementById('username');
+            if (u) u.textContent = username;
+            closeLoginOverlay();
+            console.log('Login successful, initializing socket...'); // Debugging line
+            initSocket();
+        } else {
+            alert(data.error || 'Login failed');
+        }
+    }catch(e){
+        console.error('Login error:', e); // Debugging line
+        alert('Login error');
+    }
+}
+
+document.addEventListener('keydown', (e)=>{
+    const overlay = document.getElementById('login-overlay');
+    if (overlay && overlay.style.display !== 'none'){
+        if (e.key === 'Enter'){
+            e.preventDefault();
+            submitLogin();
+        }
+    }
+});
+
+// Removed Google auth functions
+
+// --- Camera capture at ~1 FPS ---
+async function toggleCamera(){
+    const btn = document.getElementById('camera-toggle');
+    const status = document.getElementById('camera-status');
+    const preview = document.getElementById('preview');
+    if (!mediaStream){
+        try{
+            mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            preview.srcObject = mediaStream;
+            preview.style.display = 'block';
+            btn.textContent = 'Stop Camera';
+            status.textContent = 'Camera on (1 FPS)';
+            startFrameLoop();
+        }catch(err){
+            console.error('Camera permission denied or error', err);
+            status.textContent = 'Camera error';
+        }
+    }else{
+        stopFrameLoop();
+        mediaStream.getTracks().forEach(t=>t.stop());
+        mediaStream = null;
+        preview.srcObject = null;
+        preview.style.display = 'none';
+        btn.textContent = 'Start Camera (consent)';
+        status.textContent = 'Camera off';
+    }
+}
+
+function startFrameLoop(){
+    if (frameTimer) return;
+    const preview = document.getElementById('preview');
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    frameTimer = setInterval(async ()=>{
+        if (!preview.videoWidth || !preview.videoHeight) return;
+        canvas.width = preview.videoWidth;
+        canvas.height = preview.videoHeight;
+        ctx.drawImage(preview, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise(res=>canvas.toBlob(res, 'image/jpeg', 0.7));
+        if (!blob) return;
+        const form = new FormData();
+        form.append('frame', blob, `frame_${Date.now()}.jpg`);
+        try{
+            await fetch('/upload_frame', { method:'POST', body: form });
+        }catch(e){
+            console.error('Failed to upload frame', e);
+        }
+    }, 1000); // 1 FPS
+}
+
+function stopFrameLoop(){
+    if (frameTimer){
+        clearInterval(frameTimer);
+        frameTimer = null;
+    }
+}
+
+// --- Analysis fetch and Chart.js rendering ---
+let chatChart=null, videoChart=null, combinedChart=null;
+let lastAnalysisPayload=null;
+let analysisAbortController=null;
+let analysisProgressTimer=null;
+async function fetchAnalysis(){
+    const btn = document.getElementById('run-analysis-btn');
+    const stat = document.getElementById('analysis-status');
+    if (btn) btn.disabled = true; 
+    if (stat) stat.textContent = 'Running analysis...';
+    startProgressPolling();
+    try{
+        analysisAbortController = new AbortController();
+        const resp = await fetch('/analysis',{ method:'POST', signal: analysisAbortController.signal });
+        const data = await resp.json();
+        console.log('Analysis response:', data); // Debug logging
+        lastAnalysisPayload = data;
+        renderCharts(data);
+        renderRecommendations(data.recommendations || []);
+        if (stat) stat.textContent = 'Done';
+        const dl = document.getElementById('download-analysis');
+        if (dl) dl.style.display='inline-block';
+    }catch(e){
+        console.error('Analysis error:', e); // Debug logging
+        if (e.name === 'AbortError'){
+            if (stat) stat.textContent = 'Analysis cancelled';
+        } else {
+            if (stat) stat.textContent = 'Error running analysis';
+        }
+    }finally{
+        if (btn) btn.disabled = false;
+        analysisAbortController = null;
+        stopProgressPolling(true);
+    }
+}
+
+function lineCfg(label, labels, values, color){
+    return {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{ label, data: values, borderColor: color, tension: 0.2, pointRadius: 1 }]
+        },
+        options: {
+            animation: false,
+            scales: { 
+                x: {
+                    type: 'time',
+                    time: { unit: 'minute' },
+                    adapters: { date: Chart.adapters.dateFns }
+                },
+                y: { min:0, max:100 } 
+            },
+            plugins: { legend: { display: true } }
+        }
+    };
+}
+
+function renderCharts(payload){
+    console.log('renderCharts called with payload:', payload); // Debug logging
+    const chatSeries = (payload.chat_series||[]).sort((a,b)=>a.t.localeCompare(b.t));
+    const videoSeries = (payload.video_series||[]).sort((a,b)=>a.t.localeCompare(b.t));
+    const combinedSeries = combineSeries(chatSeries, videoSeries);
+    console.log('Chat series length:', chatSeries.length); // Debug logging
+    console.log('Video series length:', videoSeries.length); // Debug logging
+
+    // Labels should be ISO strings for Chart.js time scale
+    const chatLabels = chatSeries.map(p=>p.t);
+    const chatValues = chatSeries.map(p=>p.score);
+    const videoLabels = videoSeries.map(p=>p.t);
+    const videoValues = videoSeries.map(p=>p.score);
+    const combLabels = combinedSeries.map(p=>p.t);
+    const combValues = combinedSeries.map(p=>p.score);
+
+    if (chatChart) chatChart.destroy();
+    if (videoChart) videoChart.destroy();
+    if (combinedChart) combinedChart.destroy();
+
+    // Check if canvas elements exist
+    const chatCanvas = document.getElementById('chatChart');
+    const videoCanvas = document.getElementById('videoChart');
+    const combinedCanvas = document.getElementById('combinedChart');
+    
+    if (!chatCanvas || !videoCanvas || !combinedCanvas) {
+        console.error('Chart canvas elements not found!');
+        return;
+    }
+
+    const chatCtx = chatCanvas.getContext('2d');
+    const grad = chatCtx.createLinearGradient(0,0,chatCtx.canvas.width,0);
+    grad.addColorStop(0, '#10b981'); // green
+    grad.addColorStop(0.5, '#f59e0b'); // amber
+    grad.addColorStop(1, '#ef4444'); // red
+    try {
+        chatChart = new Chart(chatCtx, {
+            type: 'line',
+            data: { labels: chatLabels, datasets: [{ label: 'Chat Stress', data: chatValues, borderColor: grad, tension: 0.25, pointRadius: 2 }]},
+            options: { 
+                animation: false,
+                scales: {
+                    x: { type: 'time', time: { unit: 'minute' }, adapters: { date: Chart.adapters.dateFns } },
+                    y: { min: 0, max: 100 }
+                },
+                plugins: { legend: { display: true } }
+            }
+        });
+        console.log('Chat chart created successfully');
+    } catch (error) {
+        console.error('Error creating chat chart:', error);
+    }
+
+    const videoCtx = videoCanvas.getContext('2d');
+    const fillGrad = videoCtx.createLinearGradient(0,0,0,videoCtx.canvas.height);
+    fillGrad.addColorStop(0, 'rgba(16,185,129,0.25)');
+    fillGrad.addColorStop(1, 'rgba(16,185,129,0.05)');
+    try {
+        videoChart = new Chart(videoCtx, {
+            type: 'bar',
+            data: { labels: videoLabels, datasets: [{ label:'Video Stress', data: videoValues, backgroundColor: fillGrad, borderColor:'#10b981' }]},
+            options: { 
+                animation: false,
+                scales: {
+                    x: { type: 'time', time: { unit: 'minute' }, adapters: { date: Chart.adapters.dateFns } },
+                    y: { min: 0, max: 100 }
+                },
+                plugins: { legend: { display: true } }
+            }
+        });
+        console.log('Video chart created successfully');
+    } catch (error) {
+        console.error('Error creating video chart:', error);
+    }
+
+    try {
+        combinedChart = new Chart(combinedCanvas.getContext('2d'), {
+            type: 'radar',
+            data: {
+                labels: ['Chat','Video','Combined'],
+                datasets: [{
+                    label: 'Stress Index',
+                    data: [avg(chatValues), avg(videoValues), payload.combined||0],
+                    backgroundColor: 'rgba(59,130,246,0.2)',
+                    borderColor: '#3b82f6'
+                }]
+            },
+            options: { animation:false, scales:{ r:{ min:0, max:100 } }, plugins:{ legend:{display:true}}}
+        });
+        console.log('Combined chart created successfully');
+    } catch (error) {
+        console.error('Error creating combined chart:', error);
+    }
+
+    renderCards(payload);
+}
+
+function combineSeries(a, b){
+    // naive time-merge: for each unique timestamp, average available series
+    const map = new Map();
+    a.forEach(p=>{ map.set(p.t, {sum:p.score, n:1}); });
+    b.forEach(p=>{
+        const v = map.get(p.t);
+        if (v) { v.sum += p.score; v.n += 1; }
+        else { map.set(p.t, {sum:p.score, n:1}); }
+    });
+    return Array.from(map.entries()).sort((x,y)=>x[0].localeCompare(y[0])).map(([t,v])=>({ t, score: Math.round(v.sum/v.n) }));
+}
+
+function renderRecommendations(recs){
+    const container = document.getElementById('recommendations');
+    if (!recs || !recs.length){ container.innerHTML = ''; return; }
+    container.innerHTML = '<h3>Recommendations</h3>' + recs.map(r=>`<div><a href="${r.link}" target="_blank">${r.title}</a></div>`).join('');
+}
+
+function renderCards(payload){
+    console.log('renderCards called with payload:', payload); // Debug logging
+    // Chat cards
+    const cwrap = document.getElementById('chat-cards');
+    if (cwrap){
+        const avgV = (payload.chat_metrics?.avg ?? 0).toFixed(0);
+        const cnt = payload.chat_metrics?.count_messages ?? 0;
+        const peak = payload.chat_metrics?.peak?.score ?? '-';
+        console.log('Chat metrics:', { avgV, cnt, peak }); // Debug logging
+        cwrap.innerHTML = card('Avg Stress', avgV+'%') + card('Messages', cnt) + card('Peak Stress', peak);
+    } else {
+        console.error('chat-cards element not found!');
+    }
+    // Video cards
+    const vwrap = document.getElementById('video-cards');
+    if (vwrap){
+        const avgV = (payload.video_metrics?.avg ?? 0).toFixed(0);
+        const spikes = payload.video_metrics?.spikes ?? 0;
+        const dom = payload.video_metrics?.dominant_emotion || '-';
+        vwrap.innerHTML = card('Avg Facial Stress', avgV+'%') + card('Stress Spikes', spikes) + card('Dominant Emotion', dom);
+    }
+    // Combined card to include categorical stress level
+    const combinedWrap = document.getElementById('combined-card'); // Assuming an element with this ID exists or will be created in chat.html
+    if (combinedWrap && payload.combined_level_text){
+        combinedWrap.innerHTML = card('Overall Stress Level', payload.combined_level_text);
+    }
+}
+
+function card(title, value){
+    return `<div style="flex:1;min-width:140px;background:white;border:1px solid #eef2f7;border-radius:8px;padding:8px 10px;">
+      <div style="font-size:12px;color:#6b7280">${title}</div>
+      <div style="font-weight:600;color:#111827;font-size:16px;">${value}</div>
+    </div>`;
+}
+
+function avg(arr){ if (!arr || !arr.length) return 0; return Math.round(arr.reduce((a,b)=>a+b,0)/arr.length); }
+
+function downloadAnalysis(){
+    if (!lastAnalysisPayload) return;
+    const blob = new Blob([JSON.stringify(lastAnalysisPayload, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `analysis_${Date.now()}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+}
+
+async function endSession(){
+    if (mediaStream){ toggleCamera(); }
+    if (currentRoom){ socket.emit('leave', { room: currentRoom }); }
+    try { socket.disconnect(); } catch {}
+    openAnalysisOverlay();
+}
+
+function openAnalysisOverlay(){
+    const overlay = document.getElementById('analysis-overlay');
+    if (overlay) overlay.style.display = 'block';
+}
+
+function closeAnalysisOverlay(){
+    const overlay = document.getElementById('analysis-overlay');
+    if (overlay) overlay.style.display = 'none';
+}
+
+async function runAndShowAnalysis(){
+    const stat = document.getElementById('analysis-status');
+    const runBtn = document.getElementById('run-analysis-btn');
+    const cancelBtn = document.getElementById('cancel-analysis-btn');
+    if (runBtn) runBtn.style.display='none';
+    if (cancelBtn) cancelBtn.style.display='inline-block';
+    if (stat) stat.textContent = 'Running analysis...';
+    await fetchAnalysis();
+    if (runBtn) runBtn.style.display='inline-block';
+    if (cancelBtn) cancelBtn.style.display='none';
+}
+
+function cancelAnalysis(){
+    const stat = document.getElementById('analysis-status');
+    if (analysisAbortController){
+        analysisAbortController.abort();
+        analysisAbortController = null;
+    }
+    if (stat) stat.textContent = 'Cancelling analysis...';
+    stopProgressPolling(false);
+}
+
+function startProgressPolling(){
+    stopProgressPolling(false);
+    analysisProgressTimer = setInterval(async ()=>{
+        try{
+            const r = await fetch('/analysis/progress');
+            const j = await r.json();
+            const pct = Math.max(0, Math.min(100, parseInt(j.percent||0)));
+            const bar = document.getElementById('analysis-progress-bar');
+            const num = document.getElementById('analysis-percent');
+            if (bar) bar.style.width = pct + '%';
+            if (num) num.textContent = pct + '%';
+        }catch{}
+    }, 300);
+}
+
+function stopProgressPolling(forceDone){
+    if (analysisProgressTimer){
+        clearInterval(analysisProgressTimer);
+        analysisProgressTimer = null;
+    }
+    if (forceDone){
+        const bar = document.getElementById('analysis-progress-bar');
+        const num = document.getElementById('analysis-percent');
+        if (bar) bar.style.width = '100%';
+        if (num) num.textContent = '100%';
+    }
+}

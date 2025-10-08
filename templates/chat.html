@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Advanced Real-Time Chat</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='chat.css') }}"
+    />
+  </head>
+  <body>
+    <div
+      style="
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        justify-content: space-between;
+        background: white;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        padding: 12px 20px;
+      "
+    >
+      <div style="display: flex; align-items: center; gap: 10px">
+        <h2
+          style="
+            padding: 0;
+            margin: 0;
+            box-shadow: none;
+            background: transparent;
+          "
+        >
+          Welcome, <span id="username">{{ username }}</span>!
+        </h2>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center">
+        <button id="camera-toggle" onclick="toggleCamera()">
+          Start Camera (consent)
+        </button>
+        <button id="end-session" onclick="endSession()">End Session</button>
+      </div>
+    </div>
+    <div class="container">
+      <div class="sidebar">
+        <div class="room-list">
+          <h3>Rooms</h3>
+          {% for room in rooms %}
+          <div class="room-item" onclick="joinRoom('{{ room }}')">
+            {{ room }}
+          </div>
+          {% endfor %}
+        </div>
+        <div class="user-list">
+          <h3>Online Users</h3>
+          <div id="active-users"></div>
+        </div>
+      </div>
+      <div class="main-chat">
+        <div id="chat"></div>
+        <div class="input-area">
+          <input
+            id="message"
+            type="text"
+            placeholder="Type a message..."
+            onkeypress="handleKeyPress(event)"
+          />
+          <button onclick="sendMessage()">Send</button>
+        </div>
+        <video
+          id="preview"
+          autoplay
+          playsinline
+          style="
+            margin: 8px 20px 0 20px;
+            max-width: calc(100% - 40px);
+            display: none;
+          "
+          muted
+        ></video>
+      </div>
+    </div>
+    <!-- Name prompt overlay (shown on first load) -->
+    <div
+      id="login-overlay"
+      style="
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 10000;
+        display: block !important; /* Force visible to ensure login works */
+      "
+    >
+      <div
+        style="
+          background: white;
+          max-width: 420px;
+          margin: 100px auto;
+          padding: 20px;
+          border-radius: 10px;
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        "
+      >
+        <h3 style="margin-top: 0">Enter your name to join</h3>
+        <div style="display: flex; flex-direction: column; gap: 10px">
+          <input
+            id="login-username"
+            type="text"
+            placeholder="Your name"
+            style="padding: 10px; border: 1px solid #ddd; border-radius: 8px"
+          />
+          <button onclick="submitLogin()" id="join-chat-btn">Join Chat</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Analysis overlay -->
+    <div
+      id="analysis-overlay"
+      style="
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 9999;
+      "
+    >
+      <div
+        style="
+          background: white;
+          max-width: 900px;
+          margin: 40px auto;
+          padding: 20px;
+          border-radius: 10px;
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+          max-height: 80vh;
+          overflow-y: auto;
+        "
+      >
+        <div
+          style="
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+          "
+        >
+          <h3 style="margin: 0">End Session - See Chat Analysis?</h3>
+          <div>
+            <button
+              onclick="closeAnalysisOverlay()"
+              style="background: #ccc; color: #222; margin-right: 6px"
+            >
+              No
+            </button>
+            <button onclick="runAndShowAnalysis()">Yes</button>
+          </div>
+        </div>
+        <div
+          style="margin-top: 8px; display: flex; align-items: center; gap: 8px"
+        >
+          <div
+            id="analysis-status"
+            style="font-size: 12px; color: #666; min-width: 90px"
+          ></div>
+          <div
+            style="
+              flex: 1;
+              height: 8px;
+              background: #eee;
+              border-radius: 999px;
+              overflow: hidden;
+            "
+          >
+            <div
+              id="analysis-progress-bar"
+              style="
+                width: 0%;
+                height: 100%;
+                background: #3b82f6;
+                transition: width 0.2s ease;
+              "
+            ></div>
+          </div>
+          <div
+            id="analysis-percent"
+            style="
+              font-size: 12px;
+              color: #666;
+              min-width: 40px;
+              text-align: right;
+            "
+          >
+            0%
+          </div>
+        </div>
+        <div
+          style="
+            margin-top: 16px;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+          "
+        >
+          <div
+            style="
+              background: #f9fafb;
+              border: 1px solid #eef2f7;
+              border-radius: 10px;
+              padding: 12px;
+            "
+          >
+            <h4 style="margin: 0 0 8px 0">Chat Analysis</h4>
+            <canvas id="chatChart" height="140"></canvas>
+            <div
+              id="chat-cards"
+              style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px"
+            ></div>
+          </div>
+          <div
+            style="
+              background: #f9fafb;
+              border: 1px solid #eef2f7;
+              border-radius: 10px;
+              padding: 12px;
+            "
+          >
+            <h4 style="margin: 0 0 8px 0">Video Analysis</h4>
+            <canvas id="videoChart" height="140"></canvas>
+            <div
+              id="video-cards"
+              style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px"
+            ></div>
+          </div>
+          <div
+            style="
+              background: #f9fafb;
+              border: 1px solid #eef2f7;
+              border-radius: 10px;
+              padding: 12px;
+            "
+          >
+            <h4 style="margin: 0 0 8px 0">Combined Analysis</h4>
+            <canvas id="combinedChart" height="140"></canvas>
+            <div
+              id="combined-card"
+              style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px"
+            ></div>
+            <div id="recommendations" style="margin-top: 8px"></div>
+          </div>
+        </div>
+        <div
+          style="margin-top: 12px; display: flex; gap: 8px; align-items: center"
+        >
+          <button id="run-analysis-btn" onclick="runAndShowAnalysis()">
+            Run Analysis
+          </button>
+          <button
+            id="cancel-analysis-btn"
+            onclick="cancelAnalysis()"
+            style="display: none; background: #e2e8f0; color: #111"
+          >
+            Cancel
+          </button>
+          <button
+            id="download-analysis"
+            onclick="downloadAnalysis()"
+            style="display: none"
+          >
+            Download Analysis (JSON)
+          </button>
+          <button onclick="closeAnalysisOverlay()">Close</button>
+        </div>
+      </div>
+    </div>
+    <script>
+      // Provide your Firebase config here to enable Google Sign-In
+      // window.FIREBASE_CONFIG = { apiKey: "...", authDomain: "...", projectId: "...", appId: "..." };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.min.js"></script>
+    <script src="{{ url_for('static', filename='chat.js') }}"></script>
+  </body>
+</html>
