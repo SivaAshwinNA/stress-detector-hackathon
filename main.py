@@ -149,9 +149,9 @@ def upload_frame():
         logger.error(f"upload_frame error: {str(e)}")
         return jsonify({"error":"server error"}), 500
 
-def _map_emotion_to_stress(emotion: str) -> int:
-    """Map emotions to stress scores (0-100, higher = more stressed)"""
-    mapping = {
+def _map_emotion_to_stress(emotion: str, confidence: float = 0.5) -> int:
+    """Map emotions to stress scores (0-100, higher = more stressed) with confidence adjustment"""
+    base_mapping = {
         'happy': 5,      # Very low stress
         'neutral': 25,   # Low stress
         'surprise': 35,  # Mild stress
@@ -160,7 +160,15 @@ def _map_emotion_to_stress(emotion: str) -> int:
         'fear': 80,      # Very high stress
         'angry': 90,     # Very high stress
     }
-    return mapping.get((emotion or '').lower(), 50)  # Default to moderate stress
+    
+    base_score = base_mapping.get((emotion or '').lower(), 50)  # Default to moderate stress
+    
+    # Adjust score based on confidence
+    # Low confidence = more uncertainty = slightly higher stress
+    confidence_adjustment = (1 - confidence) * 10
+    adjusted_score = base_score + confidence_adjustment
+    
+    return int(max(0, min(100, adjusted_score)))
 
 def _analyze_emotion_opencv(image_path: str) -> Dict[str, Any]:
     """Analyze emotion using OpenCV Haar Cascades for face detection and basic analysis"""
@@ -189,7 +197,7 @@ def _analyze_emotion_opencv(image_path: str) -> Dict[str, Any]:
         
         # Analyze facial features
         emotion, confidence = _analyze_face_features(face_roi)
-        stress_score = _map_emotion_to_stress(emotion)
+        stress_score = _map_emotion_to_stress(emotion, confidence)
         
         return {
             'emotion': emotion,
@@ -266,6 +274,15 @@ sentiment_analyzer = SentimentIntensityAnalyzer()
 def run_analysis():
     try:
         logger.info("Starting analysis...")
+        data = request.get_json(silent=True) or {}
+        room_filter = (data.get('room') or '').strip() or None
+        since_iso = (data.get('since') or '').strip() or None
+        since_dt = None
+        if since_iso:
+            try:
+                since_dt = datetime.fromisoformat(since_iso.replace('Z','+00:00'))
+            except Exception:
+                logger.warning(f"Invalid since param: {since_iso}")
         client_id = session.get('client_id')
         if client_id:
             ANALYSIS_PROGRESS[client_id] = 0
@@ -278,52 +295,71 @@ def run_analysis():
         username=session.get('username')
         logger.info(f"Analysis for user: {username}, user_id: {user_id}")
 
-        # Load chats for user (fallback to username when user_id is None)
+        # Load chats for user with optional room and since filters
         if user_id is not None:
-            chats=db.session.execute(db.select(Chat).filter_by(user_id=user_id)).scalars().all()
+            stmt = db.select(Chat).filter_by(user_id=user_id)
         else:
-            chats=db.session.execute(db.select(Chat).filter_by(username=username)).scalars().all()
+            stmt = db.select(Chat).filter_by(username=username)
+        if room_filter:
+            stmt = stmt.filter(Chat.room == room_filter)
+        if since_dt:
+            stmt = stmt.filter(Chat.timestamp >= since_dt)
+        chats = db.session.execute(stmt).scalars().all()
         
-        logger.info(f"Found {len(chats)} chat messages")
+        logger.info(f"Found {len(chats)} chat messages for user {username} (user_id: {user_id}), room={room_filter}, since={since_dt}")
+        
+        # Debug: Log some sample messages
+        for i, chat in enumerate(chats[:3]):  # Log first 3 messages
+            logger.info(f"Sample message {i+1}: {chat.message[:50]}... (timestamp: {chat.timestamp})")
 
         # Determine chat session start and end times
-        chat_start_time = min(c.timestamp for c in chats if c.timestamp) if chats else datetime.utcnow()
+        chat_start_time = since_dt or (min(c.timestamp for c in chats if c.timestamp) if chats else datetime.utcnow())
         chat_end_time = max(c.timestamp for c in chats if c.timestamp) if chats else datetime.utcnow()
 
         total_units = max(1, len(chats) + 1)  # +1 to avoid div by zero
         completed_units = 0
 
         chat_series=[]
-        for c in chats:
+        for i, c in enumerate(chats):
             try:
                 # Use VADER sentiment analyzer
-                logger.info(f"Analyzing message: {c.message[:50]}...")
+                logger.info(f"Analyzing message {i+1}/{len(chats)}: {c.message[:50]}...")
                 sentiment_scores = sentiment_analyzer.polarity_scores(c.message)
                 compound_score = sentiment_scores['compound']
                 logger.info(f"Sentiment scores: {sentiment_scores}")
 
-                # Map VADER's compound score to stress score (0-100)
-                # -1 (very negative) -> 100 (severe stress)
-                # 0 (neutral)        -> 50 (moderate stress)
-                # +1 (very positive) -> 0 (no stress)
+                # Enhanced VADER sentiment to stress mapping
+                # Consider all sentiment components for more accurate stress detection
+                pos_score = sentiment_scores['pos']
+                neg_score = sentiment_scores['neg']
+                neu_score = sentiment_scores['neu']
+                
+                # More nuanced stress calculation
                 if compound_score >= 0.05: # Positive sentiment
                     # Scale positive sentiment (0.05 to 1) to low stress (50 to 0)
-                    score = int(50 - (compound_score - 0.05) / 0.95 * 50) # Range 0-50
-                    score = max(0, score) # Ensure minimum is 0
+                    base_score = 50 - (compound_score - 0.05) / 0.95 * 50
+                    # Adjust based on confidence in positive sentiment
+                    confidence_factor = pos_score * 0.3
+                    score = int(max(0, base_score - confidence_factor * 10))
                 elif compound_score <= -0.05: # Negative sentiment
                     # Scale negative sentiment (-1 to -0.05) to high stress (100 to 50)
-                    score = int(50 + (abs(compound_score) - 0.05) / 0.95 * 50) # Range 50-100
-                    score = min(100, score) # Ensure maximum is 100
+                    base_score = 50 + (abs(compound_score) - 0.05) / 0.95 * 50
+                    # Adjust based on confidence in negative sentiment
+                    confidence_factor = neg_score * 0.4
+                    score = int(min(100, base_score + confidence_factor * 15))
                 else: # Neutral sentiment (-0.05 to 0.05)
-                    score = 50 # Moderate stress for neutral
+                    # Neutral sentiment with slight bias toward stress if uncertainty
+                    uncertainty_factor = 1 - neu_score
+                    score = int(50 + uncertainty_factor * 10)
 
                 chat_series.append({
                     't': c.timestamp.isoformat() if c.timestamp else datetime.utcnow().isoformat(),
                     'score': score,
                     'text': c.message[:200]
                 })
+                logger.info(f"Added chat data point: score={score}, timestamp={c.timestamp}")
             except Exception as e:
-                logger.error(f"VADER sentiment analysis error: {str(e)}")
+                logger.error(f"VADER sentiment analysis error for message {i+1}: {str(e)}")
             finally:
                 completed_units += 1
                 if client_id:
@@ -372,8 +408,13 @@ def run_analysis():
                     )
                     r = result[0] if isinstance(result, list) else result
                     emotion=r.get('dominant_emotion', 'neutral')
-                    score=_map_emotion_to_stress(emotion)
-                    confidence = 0.5
+                    # Get confidence from emotion scores if available
+                    emotion_scores = r.get('emotion', {})
+                    if emotion_scores:
+                        confidence = emotion_scores.get(emotion, 0.5)
+                    else:
+                        confidence = 0.5
+                    score=_map_emotion_to_stress(emotion, confidence)
 
                 # Use actual frame timestamp, already filtered to be within chat session
                 frame_time = f.captured_at.isoformat()
@@ -488,7 +529,7 @@ def run_analysis():
             'combined_level_text': combined_level_text, # Add categorical text
             'chat_metrics': {
                 'avg': None if chat_avg is None else max(0, min(100, chat_avg)),
-                'count_messages': len(chat_series),
+                'count_messages': len(chat_series),  # Use filtered, analyzed series count
                 'peak': peak_chat,
             },
             'video_metrics': {
@@ -514,7 +555,14 @@ def run_analysis():
 
         if client_id:
             ANALYSIS_PROGRESS[client_id] = 100
+        
+        # Log final analysis results
         logger.info(f"Analysis completed successfully. Payload keys: {list(payload.keys())}")
+        logger.info(f"Chat series length: {len(payload.get('chat_series', []))}")
+        logger.info(f"Video series length: {len(payload.get('video_series', []))}")
+        logger.info(f"Message count: {payload.get('chat_metrics', {}).get('count_messages', 0)}")
+        logger.info(f"Combined score: {payload.get('combined', 'N/A')}")
+        
         return jsonify(payload)
     except Exception as e:
         db.session.rollback()

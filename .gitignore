@@ -2,6 +2,7 @@
 # This is the most important one to ignore!
 venv/
 .venv/
+env/
 
 # Python cache files
 __pycache__/
@@ -15,6 +16,36 @@ __pycache__/
 # Never commit secrets!
 .env
 
+# Streamlit local config
+.streamlit/
+.streamlit/secrets.toml
+
 # OS-generated files
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# Databases & state
+app.db
+*.sqlite
+*.sqlite3
+*.db
+instance/
+
+# Uploaded/generated media
+static/frames/
+uploads/
+
+# Logs & run state
+logs/
+*.log
+*.pid
+
+# Caches & test artifacts
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# DeepFace local cache (if created in project)
+.deepface/
