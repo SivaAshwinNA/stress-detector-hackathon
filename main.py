@@ -18,7 +18,6 @@ from firebase_admin import auth as fb_auth, credentials as fb_credentials
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer # Import VADER
 # from predict_stress import predict_stress # Removed
-from deepface import DeepFace
 import cv2
 import numpy as np
 
